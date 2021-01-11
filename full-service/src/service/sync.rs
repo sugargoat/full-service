@@ -347,11 +347,10 @@ pub fn sync_account(
 
             // Match tx outs into UTXOs.
             let output_txo_ids = process_txos(
-                &conn,
                 &block_contents.outputs,
                 &account,
                 account.next_block,
-                &wallet_db.get_password_hash()?,
+                &wallet_db,
                 logger,
             )?;
 
@@ -369,8 +368,7 @@ pub fn sync_account(
                 &output_txo_ids,
                 &account,
                 account.next_block as u64,
-                &wallet_db.get_password_hash()?,
-                &conn,
+                &wallet_db,
             )?;
             Ok(SyncAccountOk::MoreBlocksPotentiallyAvailable)
         })?;
@@ -384,14 +382,15 @@ pub fn sync_account(
 
 /// Helper function for matching a list of TxOuts to a given account.
 fn process_txos(
-    conn: &PooledConnection<ConnectionManager<SqliteConnection>>,
     outputs: &[TxOut],
     account: &Account,
     received_block_index: i64,
-    decryption_key: &[u8],
+    wallet_db: &WalletDb,
     logger: &Logger,
 ) -> Result<HashMap<i64, Vec<String>>, SyncError> {
-    let account_key: AccountKey = account.get_decrypted_account_key(&decryption_key, conn)?;
+    let conn = wallet_db.get_conn()?;
+
+    let account_key: AccountKey = account.get_decrypted_account_key(&wallet_db)?;
     let view_key = account_key.view_key();
     let account_id_hex = AccountID::from(&account_key).to_string();
 
@@ -464,8 +463,7 @@ fn process_txos(
             value,
             received_block_index,
             &account_id_hex,
-            decryption_key,
-            &conn,
+            &wallet_db,
         )?;
 
         // If we couldn't find an assigned subaddress for this value, store for -1

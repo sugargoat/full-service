@@ -4,9 +4,10 @@
 
 use crate::{
     db::{
-        account::AccountID,
+        account::{AccountID, AccountModel},
         b58_encode,
         models::{Account, AssignedSubaddress, NewAssignedSubaddress},
+        WalletDb,
     },
     error::WalletDbError,
 };
@@ -37,10 +38,9 @@ pub trait AssignedSubaddressModel {
     /// Returns:
     /// * (assigned_subaddress_b58, subaddress_index)
     fn create_next_for_account(
-        account: &Account,
-        account_key: &AccountKey,
+        account_id_hex: &str,
         comment: &str,
-        conn: &PooledConnection<ConnectionManager<SqliteConnection>>,
+        wallet_db: &WalletDb,
     ) -> Result<(String, i64), WalletDbError>;
 
     /// Get the AssignedSubaddress for a given assigned_subaddress_b58
@@ -97,15 +97,19 @@ impl AssignedSubaddressModel for AssignedSubaddress {
     }
 
     fn create_next_for_account(
-        account: &Account,
-        account_key: &AccountKey,
+        account_id_hex: &str,
         comment: &str,
-        conn: &PooledConnection<ConnectionManager<SqliteConnection>>,
+        wallet_db: &WalletDb,
     ) -> Result<(String, i64), WalletDbError> {
         use crate::db::schema::accounts::dsl::{account_id_hex as dsl_account_id_hex, accounts};
         use crate::db::schema::assigned_subaddresses;
 
+        let conn = wallet_db.get_conn()?;
+
         Ok(conn.transaction::<(String, i64), WalletDbError, _>(|| {
+            let account = Account::get(&AccountID(account_id_hex.to_string()), &conn)?;
+            let account_key = account.get_decrypted_account_key(&wallet_db)?;
+
             let subaddress_index = account.next_subaddress_index;
             let subaddress = account_key.subaddress(subaddress_index as u64);
 
@@ -122,7 +126,7 @@ impl AssignedSubaddressModel for AssignedSubaddress {
 
             diesel::insert_into(assigned_subaddresses::table)
                 .values(&subaddress_entry)
-                .execute(conn)?;
+                .execute(&conn)?;
             // Update the next subaddress index for the account
             // Note: we also update the first_block back to 0 to scan from the beginning of the
             //       ledger for this new subaddress.
@@ -133,7 +137,7 @@ impl AssignedSubaddressModel for AssignedSubaddress {
                     crate::db::schema::accounts::next_subaddress_index.eq(subaddress_index + 1),
                     crate::db::schema::accounts::next_block.eq(sync_from),
                 ))
-                .execute(conn)?;
+                .execute(&conn)?;
             Ok((subaddress_b58, subaddress_index))
         })?)
     }

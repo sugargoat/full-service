@@ -200,8 +200,7 @@ where
         // FIXME: put in db transaction
         let conn = self.wallet_db.get_conn()?;
         for account in Account::list_all(&conn)? {
-            let decrypted_account_key =
-                account.get_decrypted_account_key(&old_password_hash, &conn)?;
+            let decrypted_account_key = account.get_decrypted_account_key(&self.wallet_db)?;
 
             let encrypted_account_key = WalletDb::encrypt(
                 &mc_util_serial::encode(&decrypted_account_key),

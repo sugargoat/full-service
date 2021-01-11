@@ -93,6 +93,9 @@ impl WalletDb {
         Ok(Self::new(pool, logger))
     }
 
+    /// Gets a connection to the database.
+    ///
+    /// The connection pool maintains a pool of open connections, so that they can be reused.
     pub fn get_conn(
         &self,
     ) -> Result<PooledConnection<ConnectionManager<SqliteConnection>>, WalletDbError> {

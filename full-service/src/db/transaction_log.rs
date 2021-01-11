@@ -11,6 +11,7 @@ use crate::{
             TX_FAILED, TX_PENDING, TX_SUCCEEDED,
         },
         txo::{TxoID, TxoModel},
+        WalletDb,
     },
     error::WalletDbError,
 };
@@ -103,8 +104,7 @@ pub trait TransactionLogModel {
         subaddress_to_output_txo_ids: &HashMap<i64, Vec<String>>,
         account: &Account,
         block_count: u64,
-        password_hash: &[u8],
-        conn: &PooledConnection<ConnectionManager<SqliteConnection>>,
+        wallet_db: &WalletDb,
     ) -> Result<(), WalletDbError>;
 
     /// Log a submitted transaction.
@@ -333,27 +333,27 @@ impl TransactionLogModel for TransactionLog {
         subaddress_to_output_txo_ids: &HashMap<i64, Vec<String>>,
         account: &Account,
         block_count: u64,
-        password_hash: &[u8],
-        conn: &PooledConnection<ConnectionManager<SqliteConnection>>,
+        wallet_db: &WalletDb,
     ) -> Result<(), WalletDbError> {
         use crate::db::schema::transaction_txo_types;
 
+        let conn = wallet_db.get_conn()?;
+
         Ok(conn.transaction::<(), WalletDbError, _>(|| {
             for (subaddress_index, output_txo_ids) in subaddress_to_output_txo_ids {
-                let txos = Txo::select_by_id(&output_txo_ids, conn)?;
+                let txos = Txo::select_by_id(&output_txo_ids, &conn)?;
                 for (txo, _account_txo_status) in txos {
                     let transaction_id = TransactionID::from(txo.txo_id_hex.clone());
 
                     // Check that we haven't already logged this transaction on a previous sync
-                    match TransactionLog::get(&transaction_id.to_string(), conn) {
+                    match TransactionLog::get(&transaction_id.to_string(), &conn) {
                         Ok(_) => continue, // We've already processed this transaction on a previous sync
                         Err(WalletDbError::TransactionLogNotFound(_)) => {} // Insert below
                         Err(e) => return Err(e),
                     }
 
                     // Get the public address for the subaddress that received these TXOs
-                    let account_key: AccountKey =
-                        account.get_decrypted_account_key(password_hash, conn)?;
+                    let account_key: AccountKey = account.get_decrypted_account_key(wallet_db)?;
                     let b58_subaddress = if *subaddress_index >= 0 {
                         let subaddress = account_key.subaddress(*subaddress_index as u64);
                         b58_encode(&subaddress)?
@@ -381,7 +381,7 @@ impl TransactionLogModel for TransactionLog {
 
                     diesel::insert_into(crate::db::schema::transaction_logs::table)
                         .values(&new_transaction_log)
-                        .execute(conn)?;
+                        .execute(&conn)?;
 
                     // Create an entry per TXO for the TransactionTxoTypes
                     let new_transaction_txo = NewTransactionTxoType {
@@ -392,7 +392,7 @@ impl TransactionLogModel for TransactionLog {
                     // Note: SQLite backend does not support batch insert, so within iter is fine
                     diesel::insert_into(transaction_txo_types::table)
                         .values(&new_transaction_txo)
-                        .execute(conn)?;
+                        .execute(&conn)?;
                 }
             }
             Ok(())
@@ -552,24 +552,10 @@ mod tests {
         }
 
         // Now we'll ingest them.
-        let (account_id, _address) = Account::create(
-            &account_key,
-            Some(0),
-            None,
-            "",
-            &password_hash,
-            &wallet_db.get_conn().unwrap(),
-        )
-        .unwrap();
+        let (account_id, _address) =
+            Account::create(&account_key, Some(0), None, "", &wallet_db).unwrap();
         let account = Account::get(&account_id, &wallet_db.get_conn().unwrap()).unwrap();
-        TransactionLog::log_received(
-            &synced,
-            &account,
-            144,
-            &wallet_db.get_password_hash().unwrap(),
-            &wallet_db.get_conn().unwrap(),
-        )
-        .unwrap();
+        TransactionLog::log_received(&synced, &account, 144, &wallet_db).unwrap();
 
         for (_subaddress, txos) in synced.iter() {
             for txo_id in txos {
@@ -580,12 +566,7 @@ mod tests {
 
                 assert_eq!(&transaction_logs[0].transaction_id_hex, txo_id);
 
-                let txo_details = Txo::get(
-                    txo_id,
-                    &wallet_db.get_password_hash().unwrap(),
-                    &wallet_db.get_conn().unwrap(),
-                )
-                .unwrap();
+                let txo_details = Txo::get(txo_id, &wallet_db).unwrap();
                 assert_eq!(transaction_logs[0].value, txo_details.txo.value);
 
                 // Make the sure the types are correct - all received should be TXO_OUTPUT
@@ -680,12 +661,7 @@ mod tests {
 
         // Assert inputs are as expected
         assert_eq!(associated.inputs.len(), 1);
-        let input_details = Txo::get(
-            &associated.inputs[0],
-            &wallet_db.get_password_hash().unwrap(),
-            &wallet_db.get_conn().unwrap(),
-        )
-        .unwrap();
+        let input_details = Txo::get(&associated.inputs[0], &wallet_db).unwrap();
         assert_eq!(input_details.txo.value, 70 * MOB);
         assert_eq!(
             input_details
@@ -710,12 +686,7 @@ mod tests {
 
         // Assert outputs are as expected
         assert_eq!(associated.outputs.len(), 1);
-        let output_details = Txo::get(
-            &associated.outputs[0],
-            &wallet_db.get_password_hash().unwrap(),
-            &wallet_db.get_conn().unwrap(),
-        )
-        .unwrap();
+        let output_details = Txo::get(&associated.outputs[0], &wallet_db).unwrap();
         assert_eq!(output_details.txo.value, 50 * MOB);
         assert_eq!(
             output_details
@@ -734,12 +705,7 @@ mod tests {
 
         // Assert change is as expected
         assert_eq!(associated.change.len(), 1);
-        let change_details = Txo::get(
-            &associated.change[0],
-            &wallet_db.get_password_hash().unwrap(),
-            &wallet_db.get_conn().unwrap(),
-        )
-        .unwrap();
+        let change_details = Txo::get(&associated.change[0], &wallet_db).unwrap();
         assert_eq!(change_details.txo.value, 19990000000000); // 19.99 * MOB
         assert_eq!(
             change_details

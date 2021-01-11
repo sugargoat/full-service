@@ -173,8 +173,8 @@ impl<FPR: FogPubkeyResolver + Send + Sync + 'static> WalletTransactionBuilder<FP
             conn.transaction::<TxProposal, WalletTransactionBuilderError, _>(|| {
                 let account: Account =
                     Account::get(&AccountID(self.account_id_hex.to_string()), &conn)?;
-                let from_account_key: AccountKey = account
-                    .get_decrypted_account_key(&self.wallet_db.get_password_hash()?, &conn)?;
+                let from_account_key: AccountKey =
+                    account.get_decrypted_account_key(&self.wallet_db)?;
 
                 // Get membership proofs for our inputs
                 let indexes = self
@@ -682,15 +682,12 @@ mod tests {
         );
 
         // Get our TXO list
-        let txos: Vec<Txo> = Txo::list_for_account(
-            &AccountID::from(&account_key).to_string(),
-            &password_hash,
-            &wallet_db.get_conn().unwrap(),
-        )
-        .unwrap()
-        .iter()
-        .map(|t| t.txo.clone())
-        .collect();
+        let txos: Vec<Txo> =
+            Txo::list_for_account(&AccountID::from(&account_key).to_string(), &wallet_db)
+                .unwrap()
+                .iter()
+                .map(|t| t.txo.clone())
+                .collect();
 
         let (recipient, mut builder) =
             builder_for_random_recipient(&account_key, &wallet_db, &ledger_db, &mut rng, &logger);

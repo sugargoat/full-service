@@ -324,8 +324,7 @@ pub fn create_test_received_txo(
         value,
         received_block_count as i64,
         &AccountID::from(account_key).to_string(),
-        &wallet_db.get_password_hash().unwrap(),
-        &wallet_db.get_conn().unwrap(),
+        &wallet_db,
     )
     .unwrap();
     (txo_id_hex, txo, key_image)
@@ -382,15 +381,7 @@ pub fn random_account_with_seed_values(
     mut rng: &mut StdRng,
 ) -> AccountKey {
     let account_key = AccountKey::random(&mut rng);
-    Account::create(
-        &account_key,
-        Some(0),
-        None,
-        "",
-        password_hash,
-        &wallet_db.get_conn().unwrap(),
-    )
-    .unwrap();
+    Account::create(&account_key, Some(0), None, "", &wallet_db).unwrap();
 
     for value in seed_values.iter() {
         add_block_to_ledger_db(
@@ -406,13 +397,9 @@ pub fn random_account_with_seed_values(
 
     // Make sure we have all our TXOs
     assert_eq!(
-        Txo::list_for_account(
-            &AccountID::from(&account_key).to_string(),
-            &wallet_db.get_password_hash().unwrap(),
-            &wallet_db.get_conn().unwrap(),
-        )
-        .unwrap()
-        .len(),
+        Txo::list_for_account(&AccountID::from(&account_key).to_string(), &wallet_db)
+            .unwrap()
+            .len(),
         seed_values.len(),
     );
 
